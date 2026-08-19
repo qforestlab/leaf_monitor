@@ -21,6 +21,21 @@ import pandas as pd
 PAI_DIR  = Path("/Stor1/karun/data/pai_timeseries")
 REPO_DIR = Path("/home/kdayal/Documents/projects/qfl/leaf_monitor")
 
+# Field visit dates (YYYY-MM-DD). Drawn as vertical reference lines on every
+# panel so PAI steps can be checked against site work. Add new visits here.
+FIELD_VISITS = [
+    "2025-06-09",
+    "2025-07-06",
+    "2025-10-01",
+    "2025-11-07",
+    "2025-12-19",
+    "2026-01-28",
+    "2026-03-11",
+    "2026-04-15",
+    "2026-06-09",
+    "2026-07-28",
+]
+
 # ── Load all CSVs ─────────────────────────────────────────────────────────────
 def load_scanners():
     scanners = {}
@@ -54,6 +69,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     --hinge:     #2d6a4f;
     --hemi:      #1a6b8a;
     --linear:    #7b5ea7;
+    --visit:     #8c9aa0;
     --flag-bad:  #c0392b;
     --flag-good: #27ae60;
     --font:      'Inter', 'Segoe UI', system-ui, sans-serif;
@@ -207,6 +223,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       </div>
       <div class="sep"></div>
       <div class="control-group">
+        <span class="ctrl-label">Overlay</span>
+        <button class="tog active" id="tog-visits" onclick="toggleVisits(this)" title="Vertical lines marking field visit dates">Field visits</button>
+      </div>
+      <div class="sep"></div>
+      <div class="control-group">
         <span class="ctrl-label">Mode</span>
         <button class="tog active" id="mode-lasso" onclick="setMode('lasso', this)" title="Lasso to select and flag points">Lasso</button>
         <button class="tog" id="mode-zoom"  onclick="setMode('zoom',  this)" title="Drag to zoom in">Zoom</button>
@@ -248,12 +269,14 @@ const ESTIMATORS  = {
   linear: { col: "pai_linear", std: "pai_linear_std", color: "#7b5ea7", label: "Linear", bg: "#7b5ea7" },
 };
 const EST_KEYS    = ["hinge", "hemi", "linear"];
+const FIELD_VISITS = __FIELD_VISITS__;
 
 let currentScanner = null;
 let activeEst      = new Set(["hinge", "hemi", "linear"]);
 let linkAll        = false;
 let dragMode       = 'lasso';   // 'lasso' | 'zoom'
 let isSyncing      = false;     // prevent relayout feedback loops
+let showVisits     = true;      // field-visit reference lines
 
 // flags[scanner][idx] = 'bad' | 'good' | undefined
 let flags = {};
@@ -363,6 +386,29 @@ function buildGrid() {
 }
 
 // ── Plot rendering ─────────────────────────────────────────────────────────────
+// ── Field visit overlay ───────────────────────────────────────────────────────
+// Drawn in a neutral grey so they read as annotation, not as another series.
+function visitShapes() {
+  if (!showVisits) return [];
+  return FIELD_VISITS.map(d => ({
+    type: 'line', xref: 'x', yref: 'paper',
+    x0: d, x1: d, y0: 0, y1: 1,
+    line: { color: '#8c9aa0', width: 1, dash: 'dot' },
+    layer: 'below',
+  }));
+}
+
+function visitAnnotations() {
+  if (!showVisits) return [];
+  return FIELD_VISITS.map(d => ({
+    x: d, y: 1, xref: 'x', yref: 'paper',
+    text: '\u25be', hovertext: `Field visit ${d}`,
+    showarrow: false, yanchor: 'bottom', yshift: -2,
+    font: { size: 9, color: '#6f797e' },
+    captureevents: true,
+  }));
+}
+
 function renderPlot(est, scan_type, sub) {
   const cfg = ESTIMATORS[est];
   const f   = flags[currentScanner] || {};
@@ -409,6 +455,8 @@ function renderPlot(est, scan_type, sub) {
     yaxis:{ color:'#7a9181', gridcolor:'#e8ede4', tickfont:{size:9}, title:{text:'PAI',font:{size:9,color:'#7a9181'}}, zeroline:false },
     hovermode:'closest',
     dragmode: dragMode,
+    shapes: visitShapes(),
+    annotations: visitAnnotations(),
   };
 
   const el = document.getElementById(divId);
@@ -612,6 +660,18 @@ function downloadCSV() {
   setStatus(`Downloaded ${currentScanner}_flagged.csv`);
 }
 
+function toggleVisits(btn) {
+  showVisits = !showVisits;
+  btn.classList.toggle('active', showVisits);
+  EST_KEYS.forEach(est => SCAN_TYPES.forEach(st => {
+    if (document.getElementById(`plot-${est}-${st}`)) {
+      Plotly.relayout(`plot-${est}-${st}`,
+        { shapes: visitShapes(), annotations: visitAnnotations() });
+    }
+  }));
+  setStatus(showVisits ? 'Field visits shown' : 'Field visits hidden');
+}
+
 // ── UI helpers ────────────────────────────────────────────────────────────────
 function updateFlagSummary() {
   if (!currentScanner) return;
@@ -641,6 +701,7 @@ def generate_html(scanners):
     all_data_json = json.dumps(scanners, default=str)
     updated = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
     html = HTML_TEMPLATE.replace("__ALL_DATA__", all_data_json)
+    html = html.replace("__FIELD_VISITS__", json.dumps(sorted(FIELD_VISITS)))
     html = html.replace("__UPDATED__", updated)
     return html
 
